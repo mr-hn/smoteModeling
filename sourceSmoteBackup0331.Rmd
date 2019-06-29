@@ -1,0 +1,490 @@
+---
+title: Perfectly Balanced, As All Things Should Be  
+output:
+  rmdformats::material:
+    highlight: kate
+    self_contained: true
+    code_folding: show
+    thumbnails: false
+    gallery: true
+    cards: true
+---
+<font size="5"> <span style="color:#2f4f4f">
+
+Using SMOTE to improve predictions of fraudulent credit card transactions  
+Harish M
+</span> </font>  
+
+<!-- Custom CSS styles -->
+<style>
+div.grey { 
+background-color:#eeeeee; 
+border-radius: 5px; 
+padding: 20px;
+}
+.collapsibleHn {
+background-color: #eeeeee;
+color: #2f4f4f;
+cursor: pointer;
+width: 100%;
+border: none;
+padding: 18px;
+text-align: left;
+font-size: 20px;
+}
+.activeHn, .collapsibleHn:hover {
+background-color: #dedede;
+}
+.collapsibleHn:after {
+content: '\002B';
+color: #2f4f4f;
+float: right;
+font-size: 22;
+margin-left: 10px;
+}
+.activeHn:after {
+content: "\2212";
+}
+.contentHn {
+max-height: 0;
+overflow: hidden;
+transition: max-height 0.5s ease-out;
+}
+</style>
+<!-- End of CSS styles -->
+
+# Introduction
+
+Most classification problems do not have equal number of instances of each classes. In some cases such as medical diagnosis or credit card frauds, the difference is extreme and the consequences of false-negatives are very high. It becomes imperative to build models that not only have high accuracy but also maintain high <a href = "https://en.wikipedia.org/wiki/Precision_and_recall"target="_blank">specificity and sensitivity.</a>
+<br><br>
+
+Among <a href = "https://machinelearningmastery.com/tactics-to-combat-imbalanced-classes-in-your-machine-learning-dataset/"target="_blank">other techniques</a>, one way to improve model performance is to generate artificial samples. SMOTE - Synthetic Minority Oversampling Technique - achieves this by selecting a subset of the minority class and then creating synthetic instances of the same data. The classification model is then trained from original data + the synthetic data, giving the model an opportunity to learn a little more that it could have. While it may not always improve the performance, SMOTE is a good place to start to overcome imbalance datasets.
+<br><br> <center>![](`r "data/balanced.jpg"`){width=60%}</center> <br><br>
+
+<div class = "grey"><font size = +1> <i> 
+This project aims to predict whether or not a credit card transaction is fraudulent. On the highly imbalanced dataset, machine learning techniques such as logistic regression, tree-based methods and neural networks are first applied to understand how well the true positives are captured. The data is then SMOTE oversampled and the process is repeated. Improvements, if any, are evaluated.
+</i> </font> </div>
+
+# Required Packages
+
+The following packages are required to render this HTML document. Global options are also set to control the document layout.
+
+```{r warning = FALSE, message = FALSE}
+library(knitr) #Produce this HTML doc
+library(rmdformats) #Material theme of the document
+library(DT) #Print HTML datatables
+
+# Setting Global Options for the page render
+options(max.print = "75")
+opts_knit$set(width = "75")
+
+# Globally controlling code blocks
+opts_chunk$set(message = FALSE, # prevent messages
+               warning = FALSE, # prevent warnings
+               fig.height = 4, # figure height
+               fig.align = "center") # graph position
+
+# DT::datatable parameters
+options(DT.options = list(paging = FALSE, # disable pagination
+                          scrollY = "200px", # enable vertical scrolling
+                          scrollX = TRUE, # enable horizontal scrolling
+                          scrollCollapse = TRUE,
+                          autoWidth = TRUE, # centering the table output
+                          ordering = FALSE, # disable sorting data
+                          dom = "t",  # display just the table
+                          initComplete = JS("function(settings, json) {" ,
+                                            "$(this.api().table().header()).css(
+                                            {'color': '#888888'});",
+                                            "}")))
+```
+
+The packages in the code chunk below are used to run the analysis.
+
+```{r warning = FALSE, message = FALSE}
+library(readr) #Read CSV files
+library(dplyr) #Data manipulation
+library(lubridate) #Handling Time column
+library(rsample) #Sampling data into train and test
+library(ggplot2) #Visualization
+library(gridExtra) #Print ggplots together
+library(Hmisc) #Correlation
+library(corrplot) #Correlation plot
+library(scales) #Print numbers in log scales
+library(ROCR) #Calculate ROC area
+library(pROC) #Plot ROC curve
+library(mlTools) # Installable from GitHub - "mr-hn/mlTools"
+library(glmnet) #Regularized regressions
+library(rpart) #Decision trees
+library(rpart.plot) #Plot them
+library(ranger) #Random Forest
+library(gbm) #Gradient Boosting
+library(neuralnet) #Neuralnet
+library(ROSE) #Oversampling techniques
+library(DMwR) #SMOTE sampling
+```
+
+# Exploratory Data Analysis
+
+The dataset comes from <a href = "https://www.kaggle.com/mlg-ulb/creditcardfraud"target="_blank">Kaggle</a> and it contains transactions made using credit cards in September 2013 by European cardholders. It presents transactions that occurred in two days, where there are 492 frauds out of 284,807 transactions. The dataset is highly imbalanced, with the positive class (frauds) accounting only for 0.173% of all transactions. A preview of the raw data is printed below.
+
+```{r}
+data <- read_csv("data/creditcard.csv")
+data$Class <- as.factor(data$Class)
+
+data %>% head(10) %>% datatable(caption = "A preview of raw data")
+```
+
+The dataset contains 30 predictor variables, and the target `Class` indicating 1 for frauds and 0 otherwise. The variable `Time` indicates the number of seconds elapsed between the current transaction and the first transaction in the dataset. The variable `Amount` indicates the transaction amount in Euros. The variables V1 to V28 are the principal components of the original data. Owing to confidentiality, data has been masked using <a href = "https://mr-hn.github.io/pcaIndex/"target="_blank">Principal Component Analysis.</a> The individual variables are explored further below.
+
+### Class
+
+As already described, the ratio of 0's and 1's are highly skewed for this variable. The plot below illustrates the difference.
+
+```{r out.width="50%"}
+data %>% ggplot(aes(Class)) + geom_bar() + theme_minimal() +
+  geom_text(stat = "count", aes(label = ..count..), vjust = -0.5) +
+  theme(axis.title.y = element_blank(), axis.text.y = element_blank(), 
+        axis.ticks.y = element_blank())
+```
+
+The percentage of fraudulent transactions - 1's - is 0.173%.
+
+```{r}
+data %>% group_by(Class) %>% dplyr::summarize(n = n()) %>% 
+  mutate(Percentage = round(n * 100 / sum(n), 3)) %>% select(Class, Percentage) %>% 
+  datatable(caption = "Proportional split of Class")
+```
+
+### Time
+
+The variable time is stored as a number in the range `r range(data$Time)[1]` to `r format(range(data$Time)[2], scientific = FALSE)`. The second number `r format(range(data$Time)[2], scientific = FALSE)` is the number of seconds in two full days. Converting the field to appropriate time format, the distribution of the number of transactions on both days has been presented in the chart below.
+
+```{r out.width="70%"}
+Time_Formatted <- format(as.POSIXct((data$Time), origin = "2000-01-01", tz = "UTC"), "%Y-%m-%d, %H:%M:%S")
+Time_Formatted %>% as.data.frame() %>% mutate(Time_Formatted = ymd_hms(Time_Formatted)) %>%
+  # 96 bins spltting an 48 hours into 4 quarters each
+  ggplot(aes(x = Time_Formatted)) + geom_histogram(bins = 192) +
+  scale_x_time() + theme_minimal() + xlab("Time") + ylab("Frequency") +
+  theme(axis.text.x = element_blank())
+```
+Looking at the distribution, it would be fair to assume that the dataset starts at 00:00:00 hours on day 1 and ends at 11:59:59 on day 2.
+
+### Amount
+
+The distribution of the amount of Euros spent during all transactions is explored in the chart below. It ranges from `r range(data$Amount)[1]` to `r format(range(data$Amount)[2], scientific = FALSE)` Euros.
+
+```{r out.width="50%"}
+data %>% ggplot(aes(Amount)) + geom_histogram(bins = 200) + theme_minimal() +
+  scale_x_log10(labels = comma) + ylab("Frequency")
+```
+
+Let's take a look at the average amounts spent during fraudulent and non-fraudulent transactions.
+
+```{r}
+data %>% group_by(Class) %>% dplyr::summarize(`Average Amount` = round(mean(Amount), 3)) %>% 
+  datatable(caption = "Proportional split of Class")
+```
+
+Clearly frauds spent more.
+
+### PCA Variables
+
+By definition, variables `V1` to `V28` will not be correlated among themselves. There is some correlation between the amount and some of the V variables.
+
+```{r out.width="80%"}
+cor_data <- rcorr(as.matrix(data[,2:30]))
+corrplot(cor_data$r, type = "lower", order = "original", title = "Pairwise Correlation",
+         method = c("number"),
+         p.mat = cor_data$P, sig.level = 0.001, insig = "blank", mar = c(0,0,1,0),
+         tl.cex = 0.6, number.cex = 0.35)
+```
+
+The box plots below show the distribution of each of the V variables for both 0 and 1 class. Exploring visually, major differences are observed for `V4`, `V11`, `V12`, `V14`, `V17`, and `V18`. We should probably expect to see these variables to influence the classification model more.
+
+```{r fig.height=14, fig.width=8}
+box_viz <- list()
+for (i in colnames(data[,2:29])) {
+  box_viz[[i]] <- data %>% ggplot(aes_string(y = i)) +
+    geom_boxplot(aes(x = Class, fill = Class)) + theme_light() + xlab("") +
+    theme(legend.position = "none")
+}
+grid.arrange(grobs = box_viz, nrow = 7, ncol = 4)
+```
+
+# Modeling
+
+
+<!-- Splitting data train and data test, link to your lm v ml, explain what is being done -->
+
+```{r}
+set.seed(1804)
+data_split <- initial_split(data, prop = .7, strata = "Class")
+data_train <- training(data_split)
+data_test  <- testing(data_split)
+```
+
+<!-- glm - roc, precision recall curve area. -->
+<!-- and then one big roc curve for all models at the end,  -->
+
+<!-- ```{r} -->
+<!-- set.seed(1804) -->
+<!-- lm_model <- glm(Class ~. , data = data_train, family = binomial) -->
+<!-- lm_predict <- predict(lm_model, data_test) -->
+<!-- round(roc(data_test$Class, lm_predict)$auc, 6) -->
+<!-- lm_model %>% summary() -->
+<!-- thres_tune(data_test$Class, lm_predict, prob_end = 0.3) -->
+<!-- ``` -->
+
+<!-- Explain what each of the numbers mean in the thres_tune output and say what SMOTE is going to help with. -->
+<!-- Go with angry customers vs fraudster -->
+<!-- For each thres_tune table, choose one best record for comparison. -->
+<!-- Print it all in the end. -->
+
+<!-- Then yuo are going to try RF which has the ___ property, allowing it to capture FN and FP. -->
+
+<!-- ```{r} -->
+<!-- ranger_model <- ranger(Class ~ ., data_train, -->
+<!--                        seed = 1804, probability = TRUE, -->
+<!--                        mtry = round(sqrt(ncol(data) - 1))) -->
+<!-- ranger_predict <- predict(ranger_model, data_test)$predictions[,2] -->
+<!-- round(roc(data_test$Class, ranger_predict)$auc, 6) -->
+
+<!-- thres_tune(data_test$Class, ranger_predict, prob_end = 0.2, prob_precsn = 0.005) -->
+<!-- ``` -->
+
+<!-- Same parameters, large improvement -->
+
+<!-- <!-- ```{r} --> -->
+<!-- <!-- # Factor converted to numeric --> -->
+<!-- <!-- data_train_num <- data_train --> -->
+<!-- <!-- data_train_num$Class <- as.integer(data_train_num$Class) - 1 --> -->
+<!-- <!-- set.seed(1804) --> -->
+
+<!-- <!-- gbm_model <- gbm(Class ~ ., data = data_train_num, distribution = "bernoulli", --> -->
+<!-- <!--                  cv.folds = 5, verbose = FALSE) --> -->
+
+<!-- <!-- gbm_predict <- predict(gbm_model, data_test, type = "response", --> -->
+<!-- <!--                        n.trees =  gbm.perf(gbm_model, plot.it = FALSE)) --> -->
+
+<!-- <!-- round(roc(data_test$Class, gbm_predict)$auc, 3) --> -->
+<!-- <!-- thres_tune(data_test$Class, gbm_predict, prob_end = 0.2, prob_precsn = 0.005) --> -->
+<!-- <!-- ``` --> -->
+
+<!-- neuralnet model. probably not going to work well since it struggles to capture the minority class. -->
+<!-- Explain results. -->
+
+<!-- ```{r} -->
+<!-- set.seed(1804) -->
+
+<!-- neuralnet_model <- neuralnet(Class ~ ., data_train, hidden = c(10, 10, 10)) -->
+<!-- neuralnet_predict <- predict(neuralnet_model, data_test)[,2] -->
+<!-- round(roc(data_test$Class, neuralnet_predict)$auc, 3) -->
+
+<!-- thres_tune(data_test$Class, neuralnet_predict, prob_end = 0.2, prob_precsn = 0.005) -->
+<!-- ``` -->
+
+
+# Resampling Techniques
+
+In machine learning domain,given there is enough data, resampling entails repeatedly drawing samples to build ensemble models as in the case of bootstrapping. But in our situation, since we do not have enough data (fraudulent transactions), resampling, at it's core, is going to involve randomly eliminating the majority class or replicating the minority class. The two methods are respectively called undersampling and oversampling.
+<br><br>
+
+<<<< Before moving on, let's be clear that data_train will be used to sample from >>>>
+
+## Random Sampling
+
+### Undersampling
+
+The package `ROSE` contains function `ovun.sample` that enables random sampling. To undersample, where entries of the majority class are randomly eliminated, the argument `method` is set to `under`. `N` controls the total number of records. It's set to 1000 records.
+
+```{r out.width="50%"}
+set.seed(1804)
+data_undersamp <- ovun.sample(Class ~ ., data = data_train, method = "under", N = 1000)$data
+
+data_undersamp %>% ggplot(aes(Class)) + geom_bar() + theme_minimal() +
+  geom_text(stat = "count", aes(label = ..count..), vjust = -0.5) +
+  theme(axis.title.y = element_blank(), axis.text.y = element_blank(), 
+        axis.ticks.y = element_blank())
+```
+The sampled data now contains the original `r length(which(data_train$Class == 1))` fraudulent transactions and the remaining `r nrow(data_undersamp) - length(which(data_train$Class == 1))` of the 1000 records are randomly selected non-fraudulent transactions.
+
+With a more balanced dataset, a model can now learn to predict frauds better. At the same time, of course, the random selection may have not captured potentially useful information. 
+
+### Oversampling
+
+Setting the argument `method` to `over` randomly replicates the minority class and increases the total number of records to a number set with `N`. 
+
+```{r}
+set.seed(1804)
+data_oversamp <- ovun.sample(Class ~ ., data = data_train, method = "over", N = 300000)$data
+
+data_oversamp %>% ggplot(aes(Class)) + geom_bar() + theme_minimal() +
+  geom_text(stat = "count", aes(label = ..count..), vjust = -0.5) +
+  theme(axis.title.y = element_blank(), axis.text.y = element_blank(), 
+        axis.ticks.y = element_blank())
+```
+
+Although there were only `r length(which(data_train$Class == 1))` fraudulent records to begin with, they have been replicated `r length(which(data_oversamp$Class == 1))` times, which will help the model learn to predict them better. Since this introduces tens of thousands of replications, this method is not suitable for this dataset.
+
+### Over and Under Sampling
+
+The third approach to random sampling involves randomly selecting both majority and minorty classes to a set number. The string `both` is passed to the argument `method`. This method is slightly better than the above two approaches, but it still brings with it the drawbacks of random sampling.
+
+```{r}
+set.seed(1804)
+data_bothsamp <- ovun.sample(Class ~ ., data = data_train, method = "both", N = 2000)$data
+
+data_bothsamp %>% ggplot(aes(Class)) + geom_bar() + theme_minimal() +
+  geom_text(stat = "count", aes(label = ..count..), vjust = -0.5) +
+  theme(axis.title.y = element_blank(), axis.text.y = element_blank(), 
+        axis.ticks.y = element_blank())
+```
+
+<!-- ```{r} -->
+<!-- # Split to training and testing data -->
+<!-- set.seed(1804) -->
+<!-- data_split <- initial_split(data_oversamp, prop = .7, strata = "Class") -->
+<!-- data_over_train <- training(data_split) -->
+<!-- data_over_test  <- testing(data_split) -->
+<!-- ``` -->
+
+
+<!-- ```{r}  -->
+<!-- # Split to training and testing data -->
+<!-- set.seed(1804) -->
+<!-- data_split <- initial_split(data_bothsamp, prop = .7, strata = "Class") -->
+<!-- data_both_train <- training(data_split) -->
+<!-- data_both_test  <- testing(data_split) -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- set.seed(1804) -->
+<!-- lm_model <- glm(Class ~. , data = data_bothsamp, family = binomial) -->
+<!-- lm_predict <- predict(lm_model, data_test) -->
+<!-- round(roc(data_test$Class, lm_predict)$auc, 6) -->
+
+<!-- conf_matrix(actual = data_test$Class, predicted = lm_predict, threshold = 0) -->
+<!-- thres_tune(data_test$Class, lm_predict, prob_end = 0.3) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- ranger_model <- ranger(Class ~ ., data_oversamp, -->
+<!--                        seed = 1804, probability = TRUE, -->
+<!--                        mtry = round(sqrt(ncol(data) - 1))) -->
+<!-- ranger_predict <- predict(ranger_model, data_test)$predictions[,2] -->
+<!-- round(roc(data_test$Class, ranger_predict)$auc, 6) -->
+
+<!-- conf_matrix(actual = data_test$Class, predicted = ranger_predict, threshold = 0.15) -->
+<!-- thres_tune(data_test$Class, ranger_predict, prob_end = 0.2, prob_precsn = 0.005) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- set.seed(1804) -->
+
+<!-- neuralnet_model <- neuralnet(Class ~ ., data_bothsamp, hidden = 1) -->
+<!-- neuralnet_predict <- predict(neuralnet_model, data_test)[,2] -->
+<!-- round(roc(data_test$Class, neuralnet_predict)$auc, 3) -->
+
+<!-- thres_tune(data_test$Class, neuralnet_predict, prob_end = 0.2, prob_precsn = 0.005) -->
+<!-- ``` -->
+
+<!-- </p></div> -->
+
+
+<!-- # To be deleted SMOTE -->
+
+## SMOTE
+
+Unlike what we have been doing so far, SMOTE - Synthetic Minority Over-sampling Technique - generates new synthetic records of the minority class instead of randomly replicating them. Combining this to under-sampling, dropping the majority class, leads to a much more balanced dataset.
+<br><br>
+
+The idea behind generating the synthetic sample is that a subset of the minority class is chosen and based on the nearest neighbors, data is generated. The image below illustrates the process on the IRIS dataset. Among the minority class, new data records (smaller red circles) have been generated based on the nearest neighbors.
+
+<br><br> <center>![](`r "data/smote.png"`){width=60%}<br><br>
+<a href="http://rikunert.com/SMOTE_explained"target="_blank">Source</a></center> <br><br>
+
+The `SMOTE` function from the `DMwR` is used to generate the samples. The arguments `perc.over` and `perc.under` control the number of records in the output dataset.
+
+Setting `perc.over` to 200 will generate two times the number of initial minority class, leading to a total three times that of what we began with. Setting `perc.under` to 150 keeps only a subset of the majority class that is equal to the number of minority classes
+
+```{r}
+set.seed(1804)
+
+data_smote <- SMOTE(Class ~ ., as.data.frame(data_train), perc.over = 200, perc.under = 150)
+
+data_smote %>% ggplot(aes(Class)) + geom_bar() + theme_minimal() +
+  geom_text(stat = "count", aes(label = ..count..), vjust = -0.5) +
+  theme(axis.title.y = element_blank(), axis.text.y = element_blank(), 
+        axis.ticks.y = element_blank())
+```
+
+We can take a look at the newly generated minority class in the graph of the principal components.
+
+```{r out.width="80%"}
+data_smote_minority <- 
+  data_smote %>% filter(Class == 1) %>% anti_join(data_train) %>% 
+  mutate(data_type = "Synthetic Minority") %>% 
+  bind_rows(
+    data_smote %>% filter(Class == 1) %>% semi_join(data_train) %>%
+      mutate(data_type = "Original Minority")) 
+
+princomp(data_smote_minority[1:30])$scores %>% as.data.frame() %>% select(1:2) %>% 
+  bind_cols(data_smote_minority) %>% select(1,2,34) %>%
+  ggplot(aes(`Comp.1`, `Comp.2`, color = data_type)) + geom_point(alpha = 0.5) + 
+  theme_minimal()
+```
+
+The data thus generated can now be used while developing the classification model.
+
+
+<!-- ```{r} -->
+<!-- set.seed(1804) -->
+<!-- lm_model <- glm(Class ~. , data = data_smote_train, family = binomial) -->
+<!-- lm_predict <- predict(lm_model, data_test) -->
+<!-- round(roc(data_test$Class, lm_predict)$auc, 6) -->
+
+
+<!-- thres_tune(data_test$Class, lm_predict, prob_end = 0.3) -->
+<!-- ``` -->
+
+<!-- </p></div> -->
+
+
+
+# SMOTE Modeling
+
+Explain you are using the new training data and then test from the original test data
+
+Repeat the OG process, printing tables after tables, best record after best record
+Do not compare with the original models
+
+One final table, ROC area etc
+
+# Summary
+
+Study the two final tables.
+Explain the angry customer vs fraudster scenario and talk about getting a balance.
+
+
+
+
+
+<!-- <!-- Javascript for click to expand --> -->
+<!-- <script> -->
+<!-- var coll = document.getElementsByClassName("collapsibleHn"); -->
+<!-- var i; -->
+
+<!-- for (i = 0; i < coll.length; i++) { -->
+<!-- coll[i].addEventListener("click", function() { -->
+<!-- this.classList.toggle("activeHn"); -->
+<!-- var content = this.nextElementSibling; -->
+<!-- if (content.style.maxHeight){ -->
+<!-- content.style.maxHeight = null; -->
+<!-- } else { -->
+<!-- content.style.maxHeight = content.scrollHeight + "px"; -->
+<!-- } -->
+<!-- }); -->
+<!-- } -->
+<!-- </script> -->
+<!-- <!-- End of Javascript --> -->
