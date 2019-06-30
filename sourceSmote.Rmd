@@ -278,45 +278,33 @@ The data thus generated can now be used while developing the classification mode
 
 # Modeling
 
-This post explores two models to classify fraudulent transactions - 
-Say you are going to use two models - glm and Then yuo are going to try RF which has the ___ property, allowing it to capture FN and FP.
-Two parameters measured are ROC and PR area
-Explain cross-validation
-
+This project explores two models to classify fraudulent transactions - a simple GLM, and a Random Forest to capture non-linearities. Models are being applied on the `full data`, `SMOTE sampled data` and `Random Over-Under sampled data`. All models are 5-fold cross validated and their ROC area and Precision-Recall area are measured to observe any improvement in performance when sampled data is used during modeling.
 
 ## On Full Data
 
-Say these are the ROC and PR area under the curve information.
-
+The functions `bin_cv_glm` and `bin_cv_rf` used below apply 5-fold cross validated GLM and RF models respectively. It returns AUC-ROC and AUC-PR for each fold of the data. The numbers are printed below.
 
 ```{r}
-# glm_full_params <- bin_cv_glm(k = 5, data, formula = "Class ~ .", 
-# y = "Class", seed = 1804)
+# GLM and RF on full data
+glm_full_params <- bin_cv_glm(k = 5, data, formula = "Class ~ .", y = "Class", seed = 1804)
+rf_full_params <- bin_cv_rf(k = 5, data, formula = "Class ~ .", y = "Class", seed = 1804)
 
-# rf_full_params <- bin_cv_rf(k = 5, data, formula = "Class ~ .", 
-# y = "Class", seed = 1804)
-rf_full_params <- 0
-glm_full_params <- 0
-rf_full_params$roc_area <- 0.9011
-rf_full_params$pr_area <- 0.9011
-glm_full_params$roc_area <- 0.9011
-glm_full_params$pr_area <- 0.9011
+# Printing ROC and PR area of each fold
+data.frame(model = "GLM", type = "ROC", t(glm_full_params$roc_area %>% round(3))) %>% 
+  bind_rows(data.frame(model = "GLM", type = "PR", t(glm_full_params$pr_area %>% round(3)))) %>% 
+  bind_rows(data.frame(model = "RF", type = "ROC", t(rf_full_params$roc_area %>% round(3)))) %>% 
+  bind_rows(data.frame(model = "RF", type = "PR", t(rf_full_params$pr_area %>% round(3)))) %>% 
+  datatable(caption = "ROC and PR areas for each fold of data during GLM and RF")
 ```
-
-<!-- Repeat and observe that there is an increase -->
-Explain you are going to work on two sampled data - SMOTE and over-under-sample
-Explain you are going to repeat the sampling process 5 times to get better results
-Then you are going to do 5-fold cross validated glm and rf models
-
-
 
 ## Random Over-Under Sampling
 
-
+Like in the previous secions, random over-under sampling is performed, and this time, the process is repeated 5 times with replacement to collect more samples. The 10k samples are then modelled on and 5-fold cross validated. The ROC and PR areas are printed below.
 ```{r out.width="50%"}
 data_bothsamp <- data.frame()
 seed = 1804
 
+# Sampling 5 times and merging
 for (i in 1:5) {
   set.seed(seed + i)
   data_bothsamp <- bind_rows(data_bothsamp,
@@ -324,24 +312,29 @@ for (i in 1:5) {
                                          method = "both", N = 2000)$data)
 }
 
-data_bothsamp %>% ggplot(aes(Class)) + geom_bar() + theme_minimal() +
-  geom_text(stat = "count", aes(label = ..count..), vjust = -0.5) +
-  theme(axis.title.y = element_blank(), axis.text.y = element_blank(), 
-        axis.ticks.y = element_blank())
+# Modeling
+rf_bothsamp_params <- bin_cv_rf(k = 5, data_bothsamp, formula = "Class ~ .", y = "Class", seed = 1804)
+glm_bothsamp_params <- bin_cv_glm(k = 5, data_bothsamp, formula = "Class ~ .", y = "Class", seed = 1804)
 
-rf_bothsamp_params <- bin_cv_rf(k = 5, data_bothsamp, formula = "Class ~ .", 
-                                      y = "Class", seed = 1804)
-glm_bothsamp_params <- bin_cv_glm(k = 5, data_bothsamp, formula = "Class ~ .", 
-                                        y = "Class", seed = 1804)
+# Printing ROC and PR area of each fold
+data.frame(model = "GLM", type = "ROC", t(glm_bothsamp_params$roc_area %>% round(3))) %>% 
+  bind_rows(data.frame(model = "GLM", type = "PR", t(glm_bothsamp_params$pr_area %>% round(3)))) %>% 
+  bind_rows(data.frame(model = "RF", type = "ROC", t(rf_bothsamp_params$roc_area %>% round(3)))) %>% 
+  bind_rows(data.frame(model = "RF", type = "PR", t(rf_bothsamp_params$pr_area %>% round(3)))) %>% 
+  datatable(caption = "ROC and PR areas for each fold of data during GLM and RF on Random Sampling")
 ```
 
+There is a very sharp increase, with random forest models reaching an almost perfect 1.
 
 ## SMOTE Sampling
+
+Data is SMOTE sampled 5 times and the 11k records are modelled on.
 
 ```{r out.width="50%"}
 data_smote <- data.frame()
 seed = 1804
 
+# Sampling 5 times and merging
 for (i in 1:5) {
   set.seed(seed + i)
   data_smote <- bind_rows(data_smote,
@@ -349,20 +342,25 @@ for (i in 1:5) {
                                 perc.over = 200, perc.under = 150))
 }
 
-data_smote %>% ggplot(aes(Class)) + geom_bar() + theme_minimal() +
-  geom_text(stat = "count", aes(label = ..count..), vjust = -0.5) +
-  theme(axis.title.y = element_blank(), axis.text.y = element_blank(), 
-        axis.ticks.y = element_blank())
+# Modeling
+rf_smote_params <- bin_cv_rf(k = 5, data_smote, formula = "Class ~ .", y = "Class", seed = 1804)
+glm_smote_params <- bin_cv_glm(k = 5, data_smote, formula = "Class ~ .", y = "Class", seed = 1804)
 
-rf_smote_params <- bin_cv_rf(k = 5, data_smote, formula = "Class ~ .", 
-                                   y = "Class", seed = 1804)
-glm_smote_params <- bin_cv_glm(k = 5, data_smote, formula = "Class ~ .", 
-                                     y = "Class", seed = 1804)
+# Printing ROC and PR area of each fold
+data.frame(model = "GLM", type = "ROC", t(glm_smote_params$roc_area %>% round(3))) %>% 
+  bind_rows(data.frame(model = "GLM", type = "PR", t(glm_smote_params$pr_area %>% round(3)))) %>% 
+  bind_rows(data.frame(model = "RF", type = "ROC", t(rf_smote_params$roc_area %>% round(3)))) %>% 
+  bind_rows(data.frame(model = "RF", type = "PR", t(rf_smote_params$pr_area %>% round(3)))) %>% 
+  datatable(caption = "ROC and PR areas for each fold of data during GLM and RF on SMOTE")
 ```
+Very high values of ROC and PR areas are observed again.
 
-Model performance
+## Comparing Model Performances
+
+The outputs of models built above are averaged across all folds and presented in the bar chart below.
 
 ```{r out.width="100%"}
+# Collecting the model params data into a dataframe
 model_data <- c("Random", "Random", "Random", "Random")
 model <- c("RF", "RF", "GLM", "GLM")
 area_type <- c("ROC Area", "PR Area", "ROC Area", "PR Area")
@@ -381,7 +379,6 @@ area <- c(rf_full_params$roc_area %>% mean(),
           glm_full_params$pr_area %>% mean())
 cv_model_area_table <- bind_rows(cv_model_area_table, data.frame(model_data, model, area_type, area))
 
-
 model_data <- c("SMOTE", "SMOTE", "SMOTE", "SMOTE")
 model <- c("RF", "RF", "GLM", "GLM")
 area_type <- c("ROC Area", "PR Area", "ROC Area", "PR Area")
@@ -391,6 +388,7 @@ area <- c(rf_smote_params$roc_area %>% mean(),
           glm_smote_params$pr_area %>% mean())
 cv_model_area_table <- bind_rows(cv_model_area_table, data.frame(model_data, model, area_type, area))
 
+# Plotting the data
 cv_model_area_table %>% ggplot(aes(interaction(model, reorder(model_data, area)), area)) + 
   geom_col(aes(fill = model), width = 0.3) + 
   geom_label(aes(label = paste(model, "\n", round(area, 4))), size = 2) + 
@@ -407,9 +405,9 @@ cv_model_area_table %>% ggplot(aes(interaction(model, reorder(model_data, area))
     labels = c("Full","Full","Random", "Random", "SMOTE", "SMOTE"))
 ```
 
-Clearly RF is better, random oversamp appears better, etc.
+Looking at both PR-area and ROC-area, random forest models perform generally better and this was expected. There is a sharp increase in the areas when using sampled data instead of the full data. It appears that the increase is about the same in both SMOTE and random sampled models.
 
-# Practical Significance & Summary
+# Practical Significance
 
 Now that it's clearly established that sampling techniques improve model performance, let's take a look at what this means practically. <br><br>
 
@@ -500,12 +498,12 @@ ranger_results_smote$thres_df %>% select(threshold, fp, fn) %>%
 
 The stretched out threshold values are observed again, and 19 FN's are observed at a threshold of 0.44, for only 202 FPs. This is a further drop from random oversampling. 23 FNs occur for the threshold of 0.58 and it misses only 92 FPs, another improvement.
 
-## Summary
+# Summary
 
 The advantages of sampling technique are two-fold. They accurately predict frauds, and at the same time, stamp far fewer legitimate transactions as fraudulent. This effectively lowers cost for the credit card company. If we are talking about 19 FN's, the FP was reduced from 484 from the original model to 202 with SMOTE - a 38% reduction. That's 182 less angry calls to the customer helpline over the two-day period the data was collected. That translates to over 33,200 calls per annum and, assuming a cost of $10 for an FP, \$332,000 in cost savings for the company.<br><br>
 
-The second advantage observed was the increase in the threshold range. This allows more room for the model to be flexible. Tagging all values above 0.44 as fraudulent is <i>safer</i> than setting the threshold at, let's say, 0.00865.<br><br>
+The second advantage observed was the increase in the threshold range. This allows more room for the model to be flexible. Tagging all values above 0.44 as fraudulent is <i>safer</i> than setting the threshold at, let's say, 0.00865. A third smaller advantage was the improvement in model build time. Because the full data has 213k records, the random forest took up to a minute to model while the 11k SMOTE data was built in under 10 seconds. <br><br>
 
-It's safe to conclude that SMOTE is capable of notably improving classification model performance and should be looked at when dealing with class imbalances. <br><br>
+Given these advantages, it's safe to conclude that SMOTE is capable of notably improving classification model performance and should be seriously explored when dealing with class imbalances. <br><br>
 
 This post was created by Harish M. The source code is available on <a href = "https://github.com/mr-hn/smoteModeling"target="_blank">GitHub.</a>
